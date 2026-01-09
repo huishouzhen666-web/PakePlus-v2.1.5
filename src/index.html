@@ -1,32 +1,673 @@
 <!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <link rel="stylesheet" href="styles.css" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PakePlus App</title>
-        <script type="module" src="/main.js" defer></script>
-    </head>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>视频播放器 - 9:16固定比例（最大化+置顶修复）</title>
+    <!-- Tailwind CSS v3 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#1E40AF',
+                        dark: '#0F172A',
+                        'dark-light': '#1E293B',
+                        'gray-custom': '#94A3B8'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto { content-visibility: auto; }
+            .volume-slider {
+                @apply w-full h-2 bg-dark-light rounded-lg appearance-none cursor-pointer;
+            }
+            .volume-slider::-webkit-slider-thumb {
+                @apply appearance-none w-4 h-4 rounded-full bg-primary;
+            }
+            .upload-area {
+                @apply border-2 border-dashed border-gray-custom rounded-lg p-4 text-center cursor-pointer
+                       hover:border-primary transition-all duration-200;
+            }
+            .video-preview { @apply w-full h-full object-cover rounded-lg; }
+            .queue-item { @apply flex items-center justify-between p-2 bg-dark-light rounded-lg mb-1; }
+        }
+    </style>
+    <style>
+        /* 全局基础样式 防溢出 核心优化 */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100vw !important;
+            height: 100vh !important;
+            overflow-x: hidden !important;
+            overflow-y: hidden !important;
+            box-sizing: border-box;
+            background-color: #0F172A !important;
+        }
+        * { box-sizing: inherit; }
+        /* 核心：播放器强制固定9:16比例 + 最大化尺寸 永不改变 不超屏 */
+        #videoContainer {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            aspect-ratio: 9 / 16 !important;
+            max-height: calc(100vh - 80px);
+            max-width: calc(100% - 20px);
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            display: block;
+        }
+        /* 视频铺满容器 保持比例 不变形 不溢出 */
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+            pointer-events: none;
+        }
+        /* 彻底移除鼠标提示 悬浮无任何效果 */
+        #videoOverlay {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            pointer-events: none;
+        }
+        /* 滚动条美化 */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #0F172A; }
+        ::-webkit-scrollbar-thumb { background: #1E293B; border-radius: 2px; }
+        /* 置顶容器专用样式 - 修复核心：超高优先级+可点击+无错位 */
+        #topContainer {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 999999 !important; /* 超高层级 绝对置顶 不被任何窗口覆盖 */
+            background: #0F172A !important;
+            pointer-events: auto !important; /* 修复点击失效 */
+            display: flex;
+            flex-direction: column;
+        }
+    </style>
+</head>
+<body class="bg-dark text-white">
+    <!-- 激活验证模态框 -->
+    <div id="activationModal" class="fixed inset-0 bg-dark flex items-center justify-center z-50">
+        <div class="bg-dark-light rounded-lg p-8 max-w-md w-full mx-4 shadow-2xl">
+            <div class="text-center mb-6">
+                <i class="fa fa-lock text-5xl text-primary mb-4"></i>
+                <h2 class="text-2xl font-bold">软件激活</h2>
+                <p class="text-gray-custom mt-2">请输入有效的激活码以使用本软件</p>
+            </div>
+            <div class="mb-6">
+                <label for="activationCode" class="block text-sm font-medium mb-2">激活码</label>
+                <div class="flex">
+                    <input type="text" id="activationCode" class="flex-grow bg-dark border border-gray-custom rounded-l-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="输入激活码">
+                    <button id="activateBtn" class="bg-primary hover:bg-secondary px-6 py-2 rounded-r-lg transition-all duration-200">
+                        <i class="fa fa-check mr-2"></i>激活
+                    </button>
+                </div>
+                <p id="activationMessage" class="mt-2 text-sm hidden"></p>
+            </div>
+            <div class="text-center text-xs text-gray-custom">
+                <p>© 2026 视频播放器 - 版权所有</p>
+            </div>
+        </div>
+    </div>
 
-    <body>
-        <main class="container">
-            <h1>Welcome to PakePlus</h1>
-            <form class="row" id="greet-form">
-                <input id="inputValue" placeholder="Enter a something..." />
-            </form>
-            <div class="resultBox">
-                <span>result: </span>
-                <span id="result"></span>
+    <!-- 主容器 最大化左侧播放器 + 右侧固定控制面板 -->
+    <div class="container mx-auto px-4 py-3 w-full h-full opacity-0 transition-opacity duration-500" id="mainContent">
+        <header class="mb-3 flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-white">视频播放器</h1>
+            <div class="flex items-center space-x-3">
+                <button id="toggleTopBtn" class="px-4 py-2 bg-dark-light rounded-lg hover:bg-primary transition-all duration-200">
+                    <i class="fa fa-thumb-tack mr-2"></i>窗口置顶
+                </button>
+                <button id="helpBtn" class="px-4 py-2 bg-dark-light rounded-lg hover:bg-primary transition-all duration-200">
+                    <i class="fa fa-question-circle mr-2"></i>帮助
+                </button>
             </div>
-            <div class="invokeBox">
-                <button id="openUrl">open_url_browser</button>
-                <button id="openUrlNew">open_url_new</button>
-                <button id="runCommand">run_command</button>
-                <button id="downloadFile">download_file</button>
-                <button id="getExeDir">get_exe_dir</button>
-                <button id="getEnvVar">get_env_var</button>
-                <button id="findPort">find_port</button>
+        </header>
+
+        <!-- 核心布局：左侧最大化播放器 右侧固定控制面板 完全分离 -->
+        <div class="flex flex-row gap-4 w-full h-[calc(100vh-90px)]">
+            <!-- 左侧区域：最大化9:16播放器 占满左侧全部空间 无多余内容 -->
+            <div class="flex-1 flex flex-col justify-center items-center h-full">
+                <div id="videoContainer">
+                    <video id="backgroundVideo" loop autoplay muted></video>
+                    <video id="foregroundVideo" class="hidden"></video>
+                    <div id="videoOverlay"></div>
+                </div>
             </div>
-        </main>
-    </body>
+            
+            <!-- 右侧区域：固定宽度360px 所有功能集中此处 永不变动 -->
+            <div class="w-[360px] flex flex-col gap-4 h-full overflow-y-auto pb-4 shrink-0">
+                <!-- 音量控制 -->
+                <div class="bg-dark-light rounded-lg p-4">
+                    <h2 class="text-lg font-semibold mb-3">音量控制</h2>
+                    <div class="flex items-center space-x-3">
+                        <button id="muteBtn" class="text-xl text-white">
+                            <i class="fa fa-volume-up"></i>
+                        </button>
+                        <input type="range" id="volumeSlider" class="volume-slider" min="0" max="1" step="0.01" value="0.5">
+                        <span id="volumeValue" class="text-sm text-white">50%</span>
+                    </div>
+                </div>
+                
+                <!-- 快捷键视频上传 1-8 -->
+                <div class="bg-dark-light rounded-lg p-4">
+                    <h2 class="text-lg font-semibold mb-3">快捷键视频 (1-8)</h2>
+                    <div class="grid grid-cols-4 gap-2">
+                        <div class="key-upload" data-key="1">
+                            <div class="upload-area h-24" id="key1UploadArea">
+                                <span class="text-xl font-bold">1</span>
+                                <input type="file" id="key1FileInput" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                        <div class="key-upload" data-key="2">
+                            <div class="upload-area h-24">
+                                <span class="text-xl font-bold">2</span>
+                                <input type="file" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                        <div class="key-upload" data-key="3">
+                            <div class="upload-area h-24">
+                                <span class="text-xl font-bold">3</span>
+                                <input type="file" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                        <div class="key-upload" data-key="4">
+                            <div class="upload-area h-24">
+                                <span class="text-xl font-bold">4</span>
+                                <input type="file" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                        <div class="key-upload" data-key="5">
+                            <div class="upload-area h-24">
+                                <span class="text-xl font-bold">5</span>
+                                <input type="file" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                        <div class="key-upload" data-key="6">
+                            <div class="upload-area h-24">
+                                <span class="text-xl font-bold">6</span>
+                                <input type="file" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                        <div class="key-upload" data-key="7">
+                            <div class="upload-area h-24">
+                                <span class="text-xl font-bold">7</span>
+                                <input type="file" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                        <div class="key-upload" data-key="8">
+                            <div class="upload-area h-24">
+                                <span class="text-xl font-bold">8</span>
+                                <input type="file" class="key-file-input hidden" accept="video/mp4,video/webm">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 背景视频上传 -->
+                <div class="bg-dark-light rounded-lg p-4">
+                    <h2 class="text-lg font-semibold mb-3">循环背景视频</h2>
+                    <div id="backgroundUpload" class="upload-area">
+                        <i class="fa fa-cloud-upload text-3xl mb-2"></i>
+                        <p>拖拽视频文件至此处或点击上传</p>
+                        <p class="text-sm text-gray-custom mt-1">支持 MP4, WebM 格式</p>
+                        <input type="file" id="backgroundFileInput" class="hidden" accept="video/mp4,video/webm">
+                    </div>
+                </div>
+                
+                <!-- 视频播放队列 -->
+                <div class="bg-dark-light rounded-lg p-4 flex-grow">
+                    <h2 class="text-lg font-semibold mb-3">播放队列</h2>
+                    <div id="videoQueue" class="max-h-48 overflow-y-auto">
+                        <p class="text-gray-custom text-center py-4">队列中暂无视频</p>
+                    </div>
+                    <div class="mt-4 flex justify-between">
+                        <button id="clearQueueBtn" class="px-3 py-1 bg-red-600 rounded-lg hover:bg-red-700 transition-all duration-200">
+                            <i class="fa fa-trash mr-1"></i>清空队列
+                        </button>
+                        <button id="skipVideoBtn" class="px-3 py-1 bg-primary rounded-lg hover:bg-secondary transition-all duration-200">
+                            <i class="fa fa-step-forward mr-1"></i>跳过当前
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 帮助模态框 -->
+    <div id="helpModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-dark-light rounded-lg p-6 max-w-lg w-full mx-4">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">使用帮助</h2>
+                <button id="closeHelpBtn" class="text-gray-custom hover:text-white">
+                    <i class="fa fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div><h3 class="font-semibold text-primary">背景视频</h3><p>上传一个视频作为循环背景，会自动重复播放。</p></div>
+                <div><h3 class="font-semibold text-primary">快捷键视频</h3><p>上传最多8个视频，分别对应键盘上的1-8数字键。按下对应数字键可触发视频播放。</p></div>
+                <div><h3 class="font-semibold text-primary">播放控制</h3><ul class="list-disc pl-5 space-y-1"><li>数字键1-8：播放对应快捷键视频</li><li>多次按下相同快捷键：视频会按顺序排队播放</li></ul></div>
+                <div><h3 class="font-semibold text-primary">音量控制</h3><p>使用音量滑块调整所有视频的音量。</p></div>
+                <div><h3 class="font-semibold text-primary">窗口功能</h3><p>点击"窗口置顶"按钮可以将播放器窗口固定在最上层显示</p></div>
+            </div>
+            <div class="mt-6 text-center">
+                <button id="closeHelpBtn2" class="px-4 py-2 bg-primary rounded-lg hover:bg-secondary transition-all duration-200">我知道了</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            let isActivated = localStorage.getItem('player_activated') === 'true';
+            
+            // 带30分钟有效期的激活码验证系统
+            class ActivationSystem {
+                // 生成激活码（包含时间戳 + 随机串 + 校验和）
+                static generate() {
+                    // 1. 获取当前时间戳（秒）
+                    const timestamp = Math.floor(Date.now() / 1000);
+                    // 2. 生成8位随机字符
+                    const randomChars = this.generateRandomString(8);
+                    // 3. 组合基础串（时间戳+随机串）
+                    const baseStr = timestamp + randomChars;
+                    // 4. 生成4位校验和
+                    const checksum = this.calculateChecksum(baseStr);
+                    // 5. 拼接并分段（格式：时间戳-随机串-校验和）
+                    const code = `${timestamp}-${randomChars}-${checksum}`;
+                    return code;
+                }
+
+                // 生成随机字符串
+                static generateRandomString(length) {
+                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+                    let str = '';
+                    for (let i = 0; i < length; i++) {
+                        str += chars.charAt(Math.floor(Math.random() * chars.length));
+                    }
+                    return str;
+                }
+
+                // 计算校验和
+                static calculateChecksum(str) {
+                    let sum = 0;
+                    for (let i = 0; i < str.length; i++) {
+                        sum += str.charCodeAt(i) * (i + 1);
+                    }
+                    let checksum = (sum % 9999).toString().padStart(4, '0');
+                    return checksum.length > 4 ? checksum.substring(0, 4) : checksum;
+                }
+
+                // 验证激活码（校验格式 + 校验和 + 有效期）
+                static validateActivationCode(code) {
+                    // 1. 校验格式（时间戳-8位随机串-4位校验和）
+                    const codeParts = code.split('-');
+                    if (codeParts.length !== 3) return false;
+                    const [timestampStr, randomStr, checksum] = codeParts;
+                    
+                    // 2. 校验时间戳格式
+                    const timestamp = parseInt(timestampStr);
+                    if (isNaN(timestamp)) return false;
+                    
+                    // 3. 校验随机串长度
+                    if (randomStr.length !== 8) return false;
+                    
+                    // 4. 校验校验和
+                    const baseStr = timestampStr + randomStr;
+                    const calculatedChecksum = this.calculateChecksum(baseStr);
+                    if (calculatedChecksum !== checksum) return false;
+                    
+                    // 5. 校验有效期（30分钟）
+                    const currentTime = Math.floor(Date.now() / 1000);
+                    const expireTime = timestamp + 30 * 60; // 生成时间+30分钟
+                    if (currentTime > expireTime) return false;
+                    
+                    return true;
+                }
+
+                // 激活逻辑
+                static activate(code) {
+                    if (this.validateActivationCode(code)) {
+                        localStorage.setItem('player_activated', 'true');
+                        isActivated = true;
+                        return true;
+                    }
+                    return false;
+                }
+
+                // 取消激活
+                static deactivate() {
+                    localStorage.removeItem('player_activated');
+                    isActivated = false;
+                }
+            }
+            
+            const activationModal = document.getElementById('activationModal');
+            const activationCodeInput = document.getElementById('activationCode');
+            const activateBtn = document.getElementById('activateBtn');
+            const activationMessage = document.getElementById('activationMessage');
+            const mainContent = document.getElementById('mainContent');
+            
+            function updateActivationUI() {
+                if (isActivated) {
+                    activationModal.classList.add('hidden');
+                    mainContent.classList.remove('opacity-0');
+                    initPlayer();
+                } else {
+                    activationModal.classList.remove('hidden');
+                    mainContent.classList.add('opacity-0');
+                }
+            }
+            
+            activateBtn.addEventListener('click', function() {
+                const code = activationCodeInput.value.trim();
+                if(code === '') {
+                    showActivationMessage('请输入激活码','text-red-500');
+                    return;
+                }
+                if(ActivationSystem.activate(code)) {
+                    showActivationMessage('激活成功！正在进入软件...','text-green-500');
+                    setTimeout(updateActivationUI, 1500);
+                } else {
+                    showActivationMessage('激活码无效或已过期','text-red-500');
+                }
+            });
+            
+            activationCodeInput.addEventListener('keydown', e => {
+                if(e.key === 'Enter') activateBtn.click();
+            });
+            
+            function showActivationMessage(text, className) {
+                activationMessage.textContent = text;
+                activationMessage.className = `mt-2 text-sm ${className} block`;
+                setTimeout(() => activationMessage.classList.add('hidden'), 3000);
+            }
+            
+            updateActivationUI();
+
+            function initPlayer() {
+                const backgroundVideo = document.getElementById('backgroundVideo');
+                const foregroundVideo = document.getElementById('foregroundVideo');
+                const volumeSlider = document.getElementById('volumeSlider');
+                const volumeValue = document.getElementById('volumeValue');
+                const muteBtn = document.getElementById('muteBtn');
+                const backgroundUpload = document.getElementById('backgroundUpload');
+                const backgroundFileInput = document.getElementById('backgroundFileInput');
+                const keyUploads = document.querySelectorAll('.key-upload');
+                const videoQueue = document.getElementById('videoQueue');
+                const clearQueueBtn = document.getElementById('clearQueueBtn');
+                const skipVideoBtn = document.getElementById('skipVideoBtn');
+                const helpBtn = document.getElementById('helpBtn');
+                const helpModal = document.getElementById('helpModal');
+                const closeHelpBtn = document.getElementById('closeHelpBtn');
+                const closeHelpBtn2 = document.getElementById('closeHelpBtn2');
+                const toggleTopBtn = document.getElementById('toggleTopBtn');
+                
+                let videoQueueArray = []; 
+                let keyVideos = {}; 
+                let isPlaying = false; 
+                let previousVolume = 0.5; 
+                let isWindowTop = false;
+                
+                backgroundVideo.volume = volumeSlider.value; 
+                foregroundVideo.volume = volumeSlider.value;
+
+                // 音量控制
+                volumeSlider.addEventListener('input', function() {
+                    const volume = parseFloat(this.value);
+                    backgroundVideo.volume = volume;
+                    foregroundVideo.volume = volume;
+                    volumeValue.textContent = `${Math.round(volume * 100)}%`;
+                    
+                    // 更新静音按钮图标
+                    if (volume === 0) {
+                        muteBtn.innerHTML = '<i class="fa fa-volume-off"></i>';
+                    } else if (volume < 0.5) {
+                        muteBtn.innerHTML = '<i class="fa fa-volume-down"></i>';
+                    } else {
+                        muteBtn.innerHTML = '<i class="fa fa-volume-up"></i>';
+                    }
+                });
+
+                // 静音按钮
+                muteBtn.addEventListener('click', function() {
+                    if (backgroundVideo.volume > 0) {
+                        previousVolume = backgroundVideo.volume;
+                        backgroundVideo.volume = 0;
+                        foregroundVideo.volume = 0;
+                        volumeSlider.value = 0;
+                        volumeValue.textContent = '0%';
+                        muteBtn.innerHTML = '<i class="fa fa-volume-off"></i>';
+                    } else {
+                        backgroundVideo.volume = previousVolume;
+                        foregroundVideo.volume = previousVolume;
+                        volumeSlider.value = previousVolume;
+                        volumeValue.textContent = `${Math.round(previousVolume * 100)}%`;
+                        if (previousVolume < 0.5) {
+                            muteBtn.innerHTML = '<i class="fa fa-volume-down"></i>';
+                        } else {
+                            muteBtn.innerHTML = '<i class="fa fa-volume-up"></i>';
+                        }
+                    }
+                });
+
+                // 背景视频上传
+                backgroundUpload.addEventListener('click', function() {
+                    backgroundFileInput.click();
+                });
+
+                backgroundUpload.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    this.classList.add('border-primary');
+                });
+
+                backgroundUpload.addEventListener('dragleave', function() {
+                    this.classList.remove('border-primary');
+                });
+
+                backgroundUpload.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    this.classList.remove('border-primary');
+                    if (e.dataTransfer.files.length > 0) {
+                        handleBackgroundFile(e.dataTransfer.files[0]);
+                    }
+                });
+
+                backgroundFileInput.addEventListener('change', function() {
+                    if (this.files.length > 0) {
+                        handleBackgroundFile(this.files[0]);
+                    }
+                });
+
+                function handleBackgroundFile(file) {
+                    if (file.type.includes('video')) {
+                        const videoURL = URL.createObjectURL(file);
+                        backgroundVideo.src = videoURL;
+                        backgroundVideo.load();
+                        backgroundVideo.play();
+                    } else {
+                        alert('请上传有效的视频文件（MP4/WebM）');
+                    }
+                }
+
+                // 快捷键视频上传
+                keyUploads.forEach(upload => {
+                    const key = upload.dataset.key;
+                    const uploadArea = upload.querySelector('.upload-area');
+                    const fileInput = upload.querySelector('.key-file-input');
+
+                    uploadArea.addEventListener('click', function() {
+                        fileInput.click();
+                    });
+
+                    uploadArea.addEventListener('dragover', function(e) {
+                        e.preventDefault();
+                        this.classList.add('border-primary');
+                    });
+
+                    uploadArea.addEventListener('dragleave', function() {
+                        this.classList.remove('border-primary');
+                    });
+
+                    uploadArea.addEventListener('drop', function(e) {
+                        e.preventDefault();
+                        this.classList.remove('border-primary');
+                        if (e.dataTransfer.files.length > 0) {
+                            handleKeyFile(key, e.dataTransfer.files[0], uploadArea);
+                        }
+                    });
+
+                    fileInput.addEventListener('change', function() {
+                        if (this.files.length > 0) {
+                            handleKeyFile(key, this.files[0], uploadArea);
+                        }
+                    });
+                });
+
+                function handleKeyFile(key, file, uploadArea) {
+                    if (file.type.includes('video')) {
+                        const videoURL = URL.createObjectURL(file);
+                        keyVideos[key] = videoURL;
+                        uploadArea.innerHTML = `<span class="text-xl font-bold">${key}</span><p class="text-xs mt-1">已上传</p>`;
+                    } else {
+                        alert('请上传有效的视频文件（MP4/WebM）');
+                    }
+                }
+
+                // 键盘快捷键监听
+                document.addEventListener('keydown', function(e) {
+                    // 只响应数字键1-8
+                    if (e.key >= 1 && e.key <= 8) {
+                        const key = e.key;
+                        if (keyVideos[key]) {
+                            addToQueue(keyVideos[key], `快捷键 ${key}`);
+                        }
+                    }
+                });
+
+                // 播放队列管理
+                function addToQueue(videoURL, title) {
+                    videoQueueArray.push({ url: videoURL, title: title });
+                    updateQueueUI();
+                    
+                    // 如果当前没有播放，立即播放
+                    if (!isPlaying) {
+                        playNextVideo();
+                    }
+                }
+
+                function updateQueueUI() {
+                    if (videoQueueArray.length === 0) {
+                        videoQueue.innerHTML = '<p class="text-gray-custom text-center py-4">队列中暂无视频</p>';
+                        return;
+                    }
+
+                    videoQueue.innerHTML = '';
+                    videoQueueArray.forEach((item, index) => {
+                        const queueItem = document.createElement('div');
+                        queueItem.className = 'queue-item';
+                        queueItem.innerHTML = `
+                            <span>${index + 1}. ${item.title}</span>
+                            <button class="remove-queue-item text-gray-custom hover:text-white" data-index="${index}">
+                                <i class="fa fa-times"></i>
+                            </button>
+                        `;
+                        videoQueue.appendChild(queueItem);
+
+                        // 移除队列项
+                        queueItem.querySelector('.remove-queue-item').addEventListener('click', function() {
+                            const index = parseInt(this.dataset.index);
+                            videoQueueArray.splice(index, 1);
+                            updateQueueUI();
+                        });
+                    });
+                }
+
+                function playNextVideo() {
+                    if (videoQueueArray.length === 0) {
+                        isPlaying = false;
+                        foregroundVideo.classList.add('hidden');
+                        return;
+                    }
+
+                    isPlaying = true;
+                    const nextVideo = videoQueueArray.shift();
+                    foregroundVideo.src = nextVideo.url;
+                    foregroundVideo.classList.remove('hidden');
+                    foregroundVideo.load();
+                    foregroundVideo.play();
+                    
+                    updateQueueUI();
+
+                    // 视频播放结束后自动播放下一个
+                    foregroundVideo.onended = function() {
+                        playNextVideo();
+                    };
+                }
+
+                // 清空队列
+                clearQueueBtn.addEventListener('click', function() {
+                    videoQueueArray = [];
+                    updateQueueUI();
+                });
+
+                // 跳过当前视频
+                skipVideoBtn.addEventListener('click', function() {
+                    if (isPlaying) {
+                        foregroundVideo.pause();
+                        playNextVideo();
+                    }
+                });
+
+                // 帮助模态框
+                helpBtn.addEventListener('click', function() {
+                    helpModal.classList.remove('hidden');
+                });
+
+                closeHelpBtn.addEventListener('click', function() {
+                    helpModal.classList.add('hidden');
+                });
+
+                closeHelpBtn2.addEventListener('click', function() {
+                    helpModal.classList.add('hidden');
+                });
+
+                // 窗口置顶功能
+                toggleTopBtn.addEventListener('click', function() {
+                    isWindowTop = !isWindowTop;
+                    const mainContainer = document.querySelector('.container');
+                    
+                    if (isWindowTop) {
+                        mainContainer.id = 'topContainer';
+                        toggleTopBtn.innerHTML = '<i class="fa fa-thumb-tack mr-2"></i>取消置顶';
+                    } else {
+                        mainContainer.id = '';
+                        toggleTopBtn.innerHTML = '<i class="fa fa-thumb-tack mr-2"></i>窗口置顶';
+                    }
+                });
+            }
+        });
+    </script>
+</body>
 </html>
